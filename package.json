@@ -1,0 +1,8 @@
+{
+  "name": "ptcg-price-web-sync",
+  "version": "1.0.0",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cheerio": "^1.0.0"
+  }
+}

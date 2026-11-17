@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTCG 雲端同步查價系統</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 1050px; margin: 25px auto; padding: 0 15px; background: #f1f5f9; color: #1e293b; }
+        .card-box { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom: 20px; }
+        .sync-section { background: #eff6ff; border: 1px solid #bfdbfe; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .input-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        input[type="text"] { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 15px; }
+        .input-series { width: 140px; }
+        .input-number { width: 140px; }
+        .controls { display: flex; gap: 15px; align-items: center; margin-top: 20px; flex-wrap: wrap; }
+        input[type="number"] { padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; width: 85px; font-size: 15px; }
+        button { background: #2563eb; color: white; border: none; padding: 10px 22px; border-radius: 8px; font-size: 15px; cursor: pointer; font-weight: 600; }
+        button:hover { background: #1d4ed8; }
+        .btn-green { background: #16a34a; }
+        .btn-green:hover { background: #15803d; }
+        .btn-secondary { background: #64748b; }
+        .btn-danger { background: #ef4444; padding: 8px 12px; font-size: 13px; }
+        .table-wrap { overflow-x: auto; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        table { width: 100%; border-collapse: collapse; min-width: 750px; }
+        th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid #e2e8f0; vertical-align: middle; }
+        th { background: #f8fafc; font-weight: 600; font-size: 14px; color: #475569; }
+        img.thumb { width: 46px; height: 64px; object-fit: cover; border-radius: 4px; background: #e2e8f0; }
+        .price-main { font-weight: 700; font-size: 15px; }
+        .price-hkd { color: #16a34a; font-size: 13px; font-weight: 600; }
+        .badge-psa { background: #fef2f2; color: #dc2626; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .link-btn { font-size: 12px; color: #2563eb; text-decoration: none; }
+        .summary-box { display: flex; justify-content: flex-end; gap: 30px; margin-top: 15px; padding: 15px 20px; background: white; border-radius: 12px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.06); flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+
+    <h2>⚡ PTCG 雲端同步查價系統</h2>
+
+    <!-- 雲端同步按鈕區 -->
+    <div class="sync-section">
+        <strong>🌐 雲端一鍵抓取系列：</strong>
+        <input type="text" id="syncSeriesInput" placeholder="輸入系列 (例: SV8)" style="width: 140px;">
+        <button class="btn-green" onclick="syncSeriesFromCloud()">📥 一鍵從雲端抓取並加入暫存</button>
+        <span id="syncStatus" style="font-size: 14px; color: #1e40af;"></span>
+    </div>
+
+    <div class="card-box">
+        <label><strong>輸入要查詢的卡牌清單：</strong></label><br><br>
+        <div id="cardInputsContainer">
+            <div class="input-row">
+                <input type="text" class="input-series" placeholder="系列 (例: SV8)" value="SV8">
+                <input type="text" class="input-number" placeholder="卡號 (例: 132/106)" value="132/106">
+                <button type="button" class="btn-danger" onclick="removeRow(this)" style="display:none;">刪除</button>
+            </div>
+        </div>
+
+        <button type="button" class="btn-secondary" onclick="addRow()" style="margin-top: 10px;">＋ 增加一行</button>
+
+        <div class="controls">
+            <label>匯率 (1 JPY = HKD)：
+                <input type="number" id="rateInput" value="0.051" step="0.001">
+            </label>
+            <button id="searchBtn" onclick="startSearch()">立即查詢價錢</button>
+            <span id="statusText" style="color: #64748b; font-size: 14px;"></span>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>卡圖</th>
+                    <th>輸入系列 / 號碼</th>
+                    <th>卡牌名稱</th>
+                    <th>單卡最低價</th>
+                    <th><span class="badge-psa">PSA 10</span> 最低價</th>
+                    <th>PSA10 倍率</th>
+                </tr>
+            </thead>
+            <tbody id="resultBody"></tbody>
+        </table>
+    </div>
+
+    <div class="summary-box" id="summaryBox">
+        <div>單卡總計：¥0 (HK$0.0)</div>
+        <div style="color:#dc2626;">PSA10 總計：¥0 (HK$0.0)</div>
+    </div>
+
+    <script>
+        // 本地暫存抓取返來嘅卡資料
+        let fetchedCardsCache = [];
+
+        async function syncSeriesFromCloud() {
+            const series = document.getElementById('syncSeriesInput').value.trim();
+            const statusSpan = document.getElementById('syncStatus');
+            if (!series) return alert('請輸入要同步嘅系列名稱！');
+
+            statusStatusText = `正在透過雲端 API 抓取系列 「${series}」...`;
+            statusSpan.innerText = statusStatusText;
+
+            try {
+                const response = await fetch('/api/sync-set', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ series })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    // 將抓到嘅卡合併入快取
+                    fetchedCardsCache = fetchedCardsCache.filter(c => c.series.toUpperCase() !== series.toUpperCase());
+                    fetchedCardsCache.push(...data.cards);
+                    statusSpan.innerText = `✨ 成功！已從雲端抓取 ${data.cards.length} 張卡！`;
+                } else {
+                    statusSpan.innerText = `❌ 失敗: ${data.error}`;
+                }
+            } catch (err) {
+                statusSpan.innerText = `❌ 連線伺服器出錯`;
+            }
+        }
+
+        function addRow(series = '', number = '') {
+            const container = document.getElementById('cardInputsContainer');
+            const row = document.createElement('div');
+            row.className = 'input-row';
+            row.innerHTML = `
+                <input type="text" class="input-series" placeholder="系列 (例: SV8)" value="${series}">
+                <input type="text" class="input-number" placeholder="卡號 (例: 132/106)" value="${number}">
+                <button type="button" class="btn-danger" onclick="removeRow(this)">刪除</button>
+            `;
+            container.appendChild(row);
+            updateDeleteButtons();
+        }
+
+        function removeRow(btn) {
+            btn.parentElement.remove();
+            updateDeleteButtons();
+        }
+
+        function updateDeleteButtons() {
+            const rows = document.querySelectorAll('.input-row');
+            rows.forEach((row) => {
+                const delBtn = row.querySelector('.btn-danger');
+                delBtn.style.display = rows.length > 1 ? 'inline-block' : 'none';
+            });
+        }
+
+        function startSearch() {
+            const rows = document.querySelectorAll('.input-row');
+            const rate = parseFloat(document.getElementById('rateInput').value) || 0.051;
+            const tbody = document.getElementById('resultBody');
+            tbody.innerHTML = '';
+
+            let totalRawJpy = 0;
+            let totalPsaJpy = 0;
+            let foundCount = 0;
+
+            rows.forEach(row => {
+                const series = row.querySelector('.input-series').value.trim().toUpperCase();
+                const number = row.querySelector('.input-number').value.trim();
+                if (!series && !number) return;
+
+                // 喺快取入面搵對應卡
+                const matched = fetchedCardsCache.find(c => 
+                    c.series.toUpperCase() === series && c.number === number
+                );
+
+                const tr = document.createElement('tr');
+                const queryStr = `${series} ${number}`;
+
+                if (matched) {
+                    foundCount++;
+                    if (matched.rawPrice) totalRawJpy += matched.rawPrice;
+                    if (matched.psa10Price) totalPsaJpy += matched.psa10Price;
+
+                    let rawHtml = matched.rawPrice ? `
+                        <div class="price-main">¥${matched.rawPrice.toLocaleString()}</div>
+                        <div class="price-hkd">HK$${(matched.rawPrice * rate).toFixed(1)}</div>
+                        <a class="link-btn" href="${matched.url}" target="_blank">單卡頁面 ↗</a>
+                    ` : '<span style="color:#94a3b8;">無資料</span>';
+
+                    let psaHtml = matched.psa10Price ? `
+                        <div class="price-main" style="color:#dc2626;">¥${matched.psa10Price.toLocaleString()}</div>
+                        <div class="price-hkd">HK$${(matched.psa10Price * rate).toFixed(1)}</div>
+                    ` : '<span style="color:#94a3b8;">無資料</span>';
+
+                    let ratioHtml = (matched.rawPrice && matched.psa10Price) ? 
+                        `<strong>${(matched.psa10Price / matched.rawPrice).toFixed(2)}x</strong>` : '-';
+
+                    tr.innerHTML = `
+                        <td><img class="thumb" src="${matched.image || ''}" alt=""></td>
+                        <td><strong>${queryStr}</strong></td>
+                        <td style="font-size:14px;">${matched.name}</td>
+                        <td>${rawHtml}</td>
+                        <td>${psaHtml}</td>
+                        <td>${ratioHtml}</td>
+                    `;
+                } else {
+                    tr.innerHTML = `
+                        <td>-</td>
+                        <td><strong>${queryStr}</strong></td>
+                        <td colspan="4" style="color:#dc2626;">尚未從雲端同步此系列（請先在上方的框輸入系列並點擊「一鍵從雲端抓取」）</td>
+                    `;
+                }
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('summaryBox').innerHTML = `
+                <div>單卡總計：¥${totalRawJpy.toLocaleString()} (HK$${(totalRawJpy * rate).toFixed(1)})</div>
+                <div style="color:#dc2626;">PSA10 總計：¥${totalPsaJpy.toLocaleString()} (HK$${(totalPsaJpy * rate).toFixed(1)})</div>
+            `;
+            document.getElementById('statusText').innerText = `查詢完成，找到 ${foundCount} 張卡`;
+        }
+    </script>
+</body>
+</html>
